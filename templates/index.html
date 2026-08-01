@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Price Predictor</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0d14; --surface: #111521; --surface2: #161c2e;
+      --border: rgba(255,255,255,0.07);
+      --accent: #4f8ef7; --accent2: #7c5cfc;
+      --green: #22d98a; --red: #f75c5c; --amber: #f5a623;
+      --text: #e8ecf5; --muted: #6b7591;
+      --mono: 'Space Mono', monospace;
+      --sans: 'DM Sans', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: var(--sans); min-height: 100vh;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(79,142,247,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(79,142,247,0.03) 1px, transparent 1px);
+      background-size: 40px 40px; pointer-events: none; z-index: 0;
+    }
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+    header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+    .header-inner { display: flex; align-items: center; justify-content: space-between; }
+    .logo { font-family: var(--mono); font-size: 18px; color: var(--accent); }
+    .logo span { color: var(--muted); }
+    .badge {
+      font-family: var(--mono); font-size: 10px;
+      background: rgba(79,142,247,0.12); color: var(--accent);
+      border: 1px solid rgba(79,142,247,0.25);
+      padding: 4px 10px; border-radius: 20px; letter-spacing: 1px;
+    }
+    .hero { text-align: center; padding: 60px 0 40px; }
+    .hero h1 {
+      font-family: var(--mono); font-size: clamp(28px,5vw,52px);
+      font-weight: 700; line-height: 1.15; margin-bottom: 14px;
+      background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+      background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .hero p { color: var(--muted); font-size: 16px; margin-bottom: 36px; }
+    .search-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .search-row input {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); font-family: var(--mono); font-size: 16px;
+      padding: 14px 20px; border-radius: 10px; width: 160px;
+      outline: none; text-transform: uppercase; letter-spacing: 2px;
+      transition: border-color 0.2s;
+    }
+    .search-row input:focus { border-color: var(--accent); }
+    .search-row input::placeholder { color: var(--muted); }
+    .search-row select {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); font-family: var(--sans); font-size: 14px;
+      padding: 14px 16px; border-radius: 10px; outline: none; cursor: pointer;
+    }
+    .btn-predict {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none; color: #fff; font-family: var(--sans);
+      font-size: 15px; font-weight: 600; padding: 14px 32px;
+      border-radius: 10px; cursor: pointer; transition: opacity 0.2s;
+    }
+    .btn-predict:hover { opacity: 0.9; }
+    .btn-predict:disabled { opacity: 0.5; cursor: not-allowed; }
+    .quick-tickers { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+    .ticker-chip {
+      font-family: var(--mono); font-size: 11px;
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--muted); padding: 6px 12px; border-radius: 20px;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .ticker-chip:hover { border-color: var(--accent); color: var(--accent); }
+    #status-bar {
+      display: none; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 16px 20px; margin-bottom: 24px;
+      align-items: center; gap: 12px; font-size: 14px; color: var(--muted);
+    }
+    #status-bar.visible { display: flex; }
+    .spinner {
+      width: 18px; height: 18px; border: 2px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 0.8s linear infinite; flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #results { display: none; }
+    #results.visible { display: block; }
+    .company-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px; margin-bottom: 24px; padding: 20px 24px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    }
+    .company-name { font-size: 22px; font-weight: 600; }
+    .company-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .company-ticker { font-family: var(--mono); font-size: 28px; color: var(--accent); font-weight: 700; }
+    .metrics-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr));
+      gap: 14px; margin-bottom: 24px;
+    }
+    .metric-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px 20px;
+    }
+    .metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .metric-value { font-family: var(--mono); font-size: 22px; font-weight: 700; }
+    .metric-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .good { color: var(--green); } .warn { color: var(--amber); } .neutral { color: var(--accent); }
+    .chart-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 24px; margin-bottom: 20px;
+    }
+    .chart-title { font-size: 13px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .chart-subtitle { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 20px; }
+    .error-box {
+      background: rgba(247,92,92,0.08); border: 1px solid rgba(247,92,92,0.25);
+      color: var(--red); padding: 16px 20px; border-radius: 10px;
+      font-size: 14px; display: none; margin-bottom: 20px;
+    }
+    .error-box.visible { display: block; }
+    footer {
+      border-top: 1px solid var(--border); padding: 24px 0; margin-top: 60px;
+      text-align: center; font-size: 12px; color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="container header-inner">
+    <div class="logo">stock<span>_</span>oracle</div>
+    <div class="badge">LSTM + XGBOOST HYBRID</div>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+    <div class="hero">
+      <h1>Predict.<br/>Don't guess.</h1>
+      <p>Hybrid AI model combining LSTM deep learning + XGBoost to forecast stock prices.</p>
+      <div class="search-row">
+        <input type="text" id="ticker-input" placeholder="AAPL" maxlength="10" />
+        <select id="days-select">
+          <option value="7">7 days</option>
+          <option value="14">14 days</option>
+          <option value="30" selected>30 days</option>
+        </select>
+        <button class="btn-predict" id="predict-btn" onclick="runPrediction()">Run Prediction →</button>
+      </div>
+      <div class="quick-tickers">
+        <span>Try:</span>
+        <div class="ticker-chip" onclick="quickTicker('AAPL')">AAPL</div>
+        <div class="ticker-chip" onclick="quickTicker('GOOGL')">GOOGL</div>
+        <div class="ticker-chip" onclick="quickTicker('TSLA')">TSLA</div>
+        <div class="ticker-chip" onclick="quickTicker('MSFT')">MSFT</div>
+        <div class="ticker-chip" onclick="quickTicker('AMZN')">AMZN</div>
+      </div>
+    </div>
+
+    <div class="error-box" id="error-box"></div>
+
+    <div id="status-bar">
+      <div class="spinner"></div>
+      <span id="status-text">Downloading stock data...</span>
+    </div>
+
+    <div id="results">
+      <div class="company-bar">
+        <div>
+          <div class="company-name" id="company-name">—</div>
+          <div class="company-sub" id="company-sector">—</div>
+        </div>
+        <div class="company-ticker" id="company-ticker">—</div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">Predicted Price (Final Day)</div>
+          <div class="metric-value neutral" id="m-final-price">—</div>
+          <div class="metric-sub">End of forecast</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Hybrid MAE</div>
+          <div class="metric-value good" id="m-mae">—</div>
+          <div class="metric-sub">Lower is better</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">LSTM MAE</div>
+          <div class="metric-value warn" id="m-lstm-mae">—</div>
+          <div class="metric-sub">Before XGBoost correction</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Improvement</div>
+          <div class="metric-value good" id="m-improvement">—</div>
+          <div class="metric-sub">Hybrid vs LSTM alone</div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">Model Validation</div>
+        <div class="chart-subtitle">Actual vs Hybrid vs LSTM (Test Period)</div>
+        <div id="chart-validation" style="width:100%;height:380px;"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">30-Day Forecast</div>
+        <div class="chart-subtitle">Predicted Prices — Next 30 Business Days</div>
+        <div id="chart-forecast" style="width:100%;height:340px;"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">Historical Overview</div>
+        <div class="chart-subtitle">Full Price History + Forecast Window</div>
+        <div id="chart-history" style="width:100%;height:340px;"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="container">
+    For educational purposes only. Not financial advice.
+  </div>
+</footer>
+
+<script>
+const LAYOUT = {
+  paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+  font: { family: 'DM Sans', color: '#6b7591', size: 12 },
+  xaxis: { gridcolor: 'rgba(255,255,255,0.04)', linecolor: 'rgba(255,255,255,0.07)', tickfont: { color: '#6b7591' } },
+  yaxis: { gridcolor: 'rgba(255,255,255,0.04)', linecolor: 'rgba(255,255,255,0.07)', tickfont: { color: '#6b7591' }, tickprefix: '$' },
+  legend: { bgcolor: 'rgba(17,21,33,0.8)', bordercolor: 'rgba(255,255,255,0.07)', borderwidth: 1, font: { color: '#e8ecf5' } },
+  margin: { t: 10, r: 20, b: 40, l: 60 },
+  hovermode: 'x unified',
+  hoverlabel: { bgcolor: '#161c2e', bordercolor: 'rgba(79,142,247,0.4)', font: { color: '#e8ecf5' } }
+};
+const CONFIG = { displayModeBar: true, displaylogo: false, responsive: true };
+
+function showStatus(text) {
+  document.getElementById('status-bar').classList.add('visible');
+  document.getElementById('status-text').textContent = text;
+  document.getElementById('results').classList.remove('visible');
+  document.getElementById('error-box').classList.remove('visible');
+}
+function hideStatus() { document.getElementById('status-bar').classList.remove('visible'); }
+function showError(msg) {
+  hideStatus();
+  const box = document.getElementById('error-box');
+  box.textContent = '⚠ ' + msg;
+  box.classList.add('visible');
+}
+function quickTicker(s) { document.getElementById('ticker-input').value = s; runPrediction(); }
+
+async function runPrediction() {
+  const ticker = document.getElementById('ticker-input').value.trim().toUpperCase() || 'AAPL';
+  const forecast_days = parseInt(document.getElementById('days-select').value);
+  const btn = document.getElementById('predict-btn');
+  btn.disabled = true; btn.textContent = 'Training models...';
+
+  const msgs = [
+    'Downloading stock data...','Computing technical indicators...',
+    'Training LSTM neural network...','Training XGBoost on residuals...','Running forecast...'
+  ];
+  let i = 0; showStatus(msgs[0]);
+  const t = setInterval(() => { i=(i+1)%msgs.length; document.getElementById('status-text').textContent = msgs[i]; }, 6000);
+
+  try {
+    const res  = await fetch('/predict', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ticker, forecast_days}) });
+    clearInterval(t);
+    const data = await res.json();
+    if (!res.ok || data.status === 'error') { showError(data.error || 'Unknown error'); return; }
+    renderResults(data);
+  } catch(err) { clearInterval(t); showError('Network error: ' + err.message); }
+  finally { btn.disabled = false; btn.textContent = 'Run Prediction →'; }
+}
+
+function renderResults(data) {
+  const { ticker, company, results } = data;
+  const m = results.metrics;
+
+  document.getElementById('company-name').textContent   = company.name;
+  document.getElementById('company-sector').textContent = company.sector;
+  document.getElementById('company-ticker').textContent = ticker;
+
+  const lastPrice = results.future_prices[results.future_prices.length - 1];
+  document.getElementById('m-final-price').textContent  = '$' + lastPrice.toFixed(2);
+  document.getElementById('m-mae').textContent          = '$' + m.mae_hybrid.toFixed(2);
+  document.getElementById('m-lstm-mae').textContent     = '$' + m.mae_lstm.toFixed(2);
+  const imp = m.improvement_pct;
+  document.getElementById('m-improvement').textContent  = (imp>=0?'+':'') + imp + '%';
+  document.getElementById('m-improvement').className    = 'metric-value ' + (imp>=0?'good':'warn');
+
+  document.getElementById('results').classList.add('visible');
+  hideStatus();
+
+  Plotly.newPlot('chart-validation', [
+    { x: results.test_dates, y: results.actual,      name: 'Actual',            type:'scatter', mode:'lines', line:{ color:'#e8ecf5', width:2 } },
+    { x: results.test_dates, y: results.hybrid_pred, name: 'Hybrid (LSTM+XGB)', type:'scatter', mode:'lines', line:{ color:'#4f8ef7', width:2, dash:'dot' } },
+    { x: results.test_dates, y: results.lstm_pred,   name: 'LSTM only',         type:'scatter', mode:'lines', line:{ color:'#7c5cfc', width:1.5, dash:'dash' }, opacity:0.7 }
+  ], LAYOUT, CONFIG);
+
+  const fc = results.future_prices[results.future_prices.length-1] >= results.future_prices[0] ? '#22d98a' : '#f75c5c';
+  Plotly.newPlot('chart-forecast', [
+    { x: results.future_dates, y: results.future_prices, name:'Forecast', type:'scatter', mode:'lines+markers', line:{ color:fc, width:2.5 }, marker:{ size:6, color:fc } }
+  ], LAYOUT, CONFIG);
+
+  const histLen  = results.historical_dates.length;
+  const from     = Math.max(0, histLen - 180);
+  Plotly.newPlot('chart-history', [
+    { x: results.historical_dates.slice(from), y: results.historical_close.slice(from), name:'Historical', type:'scatter', mode:'lines', line:{ color:'#6b7591', width:1.5 } },
+    { x: results.future_dates, y: results.future_prices, name:'Forecast', type:'scatter', mode:'lines', line:{ color:fc, width:2.5, dash:'dot' } }
+  ], LAYOUT, CONFIG);
+}
+
+document.getElementById('ticker-input').addEventListener('keydown', e => { if(e.key==='Enter') runPrediction(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: stock-predictor
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --timeout 120 --workers 1
+    plan: free
