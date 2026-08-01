@@ -1,11 +1,10 @@
 import numpy as np
 import pandas as pd
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.optimizers import Adam
-from xgboost import XGBRegressor
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -18,21 +17,54 @@ def create_sequences(data, look_back=60):
     return np.array(X), np.array(y)
 
 
-def build_lstm_model(input_shape):
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense, Dropout
-    from tensorflow.keras.optimizers import Adam
+class LSTMModel(nn.Module):
+    def __init__(self, input_size, hidden_size=128, num_layers=2):
+        super(LSTMModel, self).__init__()
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=0.2
+        )
+        self.fc1 = nn.Linear(hidden_size, 32)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(32, 1)
 
-    model = Sequential([
-        LSTM(128, return_sequences=True, input_shape=input_shape),
-        Dropout(0.2),
-        LSTM(64, return_sequences=False),
-        Dropout(0.2),
-        Dense(32, activation="relu"),
-        Dense(1)
-    ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss="mean_squared_error")
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        out = out[:, -1, :]
+        out = self.relu(self.fc1(out))
+        out = self.fc2(out)
+        return out
+
+
+def train_lstm(model, X_train, y_train, epochs=30, batch_size=32):
+    X_tensor = torch.FloatTensor(X_train)
+    y_tensor = torch.FloatTensor(y_train).unsqueeze(1)
+    dataset  = TensorDataset(X_tensor, y_tensor)
+    loader   = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    criterion = nn.MSELoss()
+
+    model.train()
+    for epoch in range(epochs):
+        for X_batch, y_batch in loader:
+            optimizer.zero_grad()
+            output = model(X_batch)
+            loss   = criterion(output, y_batch)
+            loss.backward()
+            optimizer.step()
     return model
+
+
+def predict_lstm(model, X):
+    model.eval()
+    with torch.no_grad():
+        X_tensor = torch.FloatTensor(X)
+        preds    = model(X_tensor).numpy().flatten()
+    return preds
 
 
 def build_xgboost_model():
@@ -72,17 +104,11 @@ def train_and_predict(df, forecast_days=30, look_back=60):
     X_test,  y_test  = create_sequences(test_data,  look_back)
 
     print("Training LSTM model...")
-    lstm_model = build_lstm_model((look_back, len(feature_cols)))
-    lstm_model.fit(
-        X_train, y_train,
-        epochs=30,
-        batch_size=32,
-        validation_split=0.1,
-        verbose=0
-    )
+    model = LSTMModel(input_size=len(feature_cols))
+    model = train_lstm(model, X_train, y_train, epochs=30, batch_size=32)
 
-    lstm_train_pred_scaled = lstm_model.predict(X_train, verbose=0).flatten()
-    lstm_test_pred_scaled  = lstm_model.predict(X_test,  verbose=0).flatten()
+    lstm_train_pred_scaled = predict_lstm(model, X_train)
+    lstm_test_pred_scaled  = predict_lstm(model, X_test)
 
     lstm_train_pred = close_scaler.inverse_transform(lstm_train_pred_scaled.reshape(-1,1)).flatten()
     lstm_test_pred  = close_scaler.inverse_transform(lstm_test_pred_scaled.reshape(-1,1)).flatten()
@@ -112,35 +138,38 @@ def train_and_predict(df, forecast_days=30, look_back=60):
 
     hybrid_test_pred = lstm_test_pred + (0.4 * xgb_test_correction)
 
-    mae_lstm   = mean_absolute_error(y_test_actual, lstm_test_pred)
-    mae_hybrid = mean_absolute_error(y_test_actual, hybrid_test_pred)
+    mae_lstm    = mean_absolute_error(y_test_actual, lstm_test_pred)
+    mae_hybrid  = mean_absolute_error(y_test_actual, hybrid_test_pred)
     rmse_lstm   = np.sqrt(mean_squared_error(y_test_actual, lstm_test_pred))
     rmse_hybrid = np.sqrt(mean_squared_error(y_test_actual, hybrid_test_pred))
 
     print(f"Forecasting next {forecast_days} days...")
     future_predictions = _forecast_future(
-        df, lstm_model, xgb_model, close_scaler, scaler,
+        df, model, xgb_model, close_scaler, scaler,
         look_back, feature_cols, xgb_feature_cols, forecast_days, 0.4
     )
 
     test_dates   = df.index[train_size:train_size + min_len].tolist()
     last_date    = df.index[-1]
-    future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days).tolist()
+    future_dates = pd.bdate_range(
+        start=last_date + pd.Timedelta(days=1),
+        periods=forecast_days
+    ).tolist()
 
     print("Models trained successfully!")
 
     return {
-        "actual":       y_test_actual.tolist(),
-        "lstm_pred":    lstm_test_pred.tolist(),
-        "hybrid_pred":  hybrid_test_pred.tolist(),
-        "test_dates":   [str(d.date()) for d in test_dates],
-        "future_dates": [str(d.date()) for d in future_dates],
-        "future_prices": future_predictions,
+        "actual":           y_test_actual.tolist(),
+        "lstm_pred":        lstm_test_pred.tolist(),
+        "hybrid_pred":      hybrid_test_pred.tolist(),
+        "test_dates":       [str(d.date()) for d in test_dates],
+        "future_dates":     [str(d.date()) for d in future_dates],
+        "future_prices":    future_predictions,
         "metrics": {
-            "mae_lstm":       round(mae_lstm, 4),
-            "mae_hybrid":     round(mae_hybrid, 4),
-            "rmse_lstm":      round(rmse_lstm, 4),
-            "rmse_hybrid":    round(rmse_hybrid, 4),
+            "mae_lstm":        round(mae_lstm, 4),
+            "mae_hybrid":      round(mae_hybrid, 4),
+            "rmse_lstm":       round(rmse_lstm, 4),
+            "rmse_hybrid":     round(rmse_hybrid, 4),
             "improvement_pct": round(((mae_lstm - mae_hybrid) / mae_lstm) * 100, 2)
         },
         "train_size":        train_size,
@@ -149,25 +178,28 @@ def train_and_predict(df, forecast_days=30, look_back=60):
     }
 
 
-def _forecast_future(df, lstm_model, xgb_model, close_scaler, scaler,
+def _forecast_future(df, model, xgb_model, close_scaler, scaler,
                      look_back, feature_cols, xgb_feature_cols,
                      forecast_days, xgb_weight):
 
-    last_sequence    = scaler.transform(df[feature_cols].values)[-look_back:]
-    future_preds     = []
-    current_seq      = last_sequence.copy()
+    last_sequence     = scaler.transform(df[feature_cols].values)[-look_back:]
+    future_preds      = []
+    current_seq       = last_sequence.copy()
     last_xgb_features = df[xgb_feature_cols].values[-1:]
 
     for _ in range(forecast_days):
-        lstm_input        = current_seq.reshape(1, look_back, len(feature_cols))
-        lstm_pred_scaled  = lstm_model.predict(lstm_input, verbose=0)[0][0]
-        lstm_pred         = close_scaler.inverse_transform([[lstm_pred_scaled]])[0][0]
-        xgb_correction    = xgb_model.predict(last_xgb_features)[0]
-        hybrid_price      = lstm_pred + (xgb_weight * xgb_correction)
+        input_tensor     = torch.FloatTensor(current_seq).unsqueeze(0)
+        model.eval()
+        with torch.no_grad():
+            lstm_pred_scaled = model(input_tensor).item()
+
+        lstm_pred      = close_scaler.inverse_transform([[lstm_pred_scaled]])[0][0]
+        xgb_correction = xgb_model.predict(last_xgb_features)[0]
+        hybrid_price   = lstm_pred + (xgb_weight * xgb_correction)
         future_preds.append(round(float(hybrid_price), 2))
 
-        new_row    = current_seq[-1].copy()
-        new_row[0] = lstm_pred_scaled
-        current_seq = np.vstack([current_seq[1:], new_row])
+        new_row        = current_seq[-1].copy()
+        new_row[0]     = lstm_pred_scaled
+        current_seq    = np.vstack([current_seq[1:], new_row])
 
     return future_preds
